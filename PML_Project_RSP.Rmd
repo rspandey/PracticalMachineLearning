@@ -1,0 +1,171 @@
+---
+title: "MachineLearning_CourseProject_RSP"
+author: "Ravi S Pandey"
+date: "June 19, 2015"
+output:
+  html_document:
+    theme: readable
+---
+
+# 1. Introduction
+
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement – a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it.
+
+The goal of this project is to predict the manner of performing unilateral dumbbell biceps curls based on data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. The 5 possible methods include -    
+A: exactly according to the specification
+B: throwing the elbows to the front
+C: lifting the dumbbell only halfway
+D: lowering the dumbbell only halfway
+E: throwing the hips to the front
+
+# 2. Data Sources
+The training data for this project is available here:
+    
+https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv
+
+The test data is available here:
+    
+https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv
+
+The data for this project comes from this original source: http://groupware.les.inf.puc-rio.br/har
+
+# 3. Import the activity Data
+
+```{r}
+#Load the required libraries
+library(caret)
+library(rpart)
+library(rpart.plot)
+library(randomForest)
+library(corrplot)
+
+#Load the data from location
+trainingUrl <-"https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"
+testingUrl <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"
+trainingFile <- "./data/pml-training.csv"
+testingFile  <- "./data/pml-testing.csv"
+if (!file.exists("./data")) {
+    dir.create("./data")
+}
+if (!file.exists(trainingFile)) {
+    download.file(trainingUrl, destfile=trainingFile, method="curl")
+}
+if (!file.exists(testingFile)) {
+    download.file(testingUrl, destfile=testingFile, method="curl")
+}
+
+# Read the two csv files into two data frames.
+trainingRaw <- read.csv("./data/pml-training.csv")
+testingRaw <- read.csv("./data/pml-testing.csv")
+dim(trainingRaw)
+dim(testingRaw)
+```
+The training data set contains 19622 observations and 160 variables, while the testing data set contains 20 observations and 160 variables. The "classe" variable in the training set is the outcome to predict.
+
+# 4. Cleaning the data
+After loading the orginal testing and training data files, only columns related to belt, arm or dumbbell measurements were kept as predictors. Additionally, any columns containing NA or "#DIV/0!" values were excluded as predictors. Applying these constraints yielded 52 predictors.  Due to its widely known robustness and success in real world applications, a random forest predication model was created.
+
+```{r}
+# Column names related to belt, arm or dumbbell to be used as predictors
+colnames_training = colnames(trainingRaw)
+predictors = colnames_training[ grep(".*belt.*|.*arm.*|.*dumbbell.*",
+                                              colnames(trainingRaw)) ]
+## Eliminate predictor columns with NA values
+noNA = sapply(trainingRaw[,predictors],
+                    function(x) !any(is.na(x)))
+
+## Reduce predictors to columns free of NA values
+predictors = predictors[noNA]
+
+# eliminate predictor columns with "#DIV/0!"
+cols_no_DIV0 = sapply(trainingRaw[,predictors],
+                      function(x) length(grep(".*DIV/0.*",x))==0)
+predictors = predictors[cols_no_DIV0]
+
+# show number of remaining predictors
+length(predictors)
+
+# dataframes containing only the intended predictors
+mlTrain = trainingRaw[,predictors]
+mlTrain$classe = trainingRaw$classe
+mlTest = testingRaw[,c(predictors)]
+```
+After the cleaning the we are returned with 52 predictors.
+
+# 5. Prepare for Cross-Validation
+
+Prepare for cross-validation by partitioning provided training data into train and test subsets. For cross-validation, the provided training observations were subdivided into 11,778 (60%) train and 7,846 (40%) test observations.
+```{r}
+require(caret)
+trainIndex = createDataPartition(mlTrain$classe, p = 0.60, list=FALSE)
+mlTrain_train = mlTrain[ trainIndex,]
+mlTrain_test  = mlTrain[-trainIndex,]
+```
+
+# 6. Create a Random Forest Model
+
+Create a Random Forest model. We fit a predictive model for activity recognition using Random Forest algorithm because it automatically selects important variables and is robust to correlated covariates & outliers in general. 
+```{r}
+require(randomForest)
+set.seed(20130015)
+RFmodel = randomForest(classe ~ ., data=mlTrain_train)
+```
+
+```{r}
+# display model fit results
+RFmodel
+```
+
+# 7. Display Plots Describing the Random Forest Model
+
+```{r}
+plot(RFmodel, log="y",
+     main="Estimated Out-of-Bag Error and Class Error of Random Forest Model")
+legend("top", colnames(RFmodel$err.rate), col=1:6, cex=0.8, fill=1:6)
+```
+
+```{r}
+treeModel <- rpart(classe ~ ., data=mlTrain_train, method="class")
+prp(treeModel)
+```
+
+# 8. Estimate Out of Sample Error Using Cross-Validation
+Estimate out of sample error
+```{r}
+pred_oos = predict(RFmodel, newdata=subset(mlTrain_test, select=-classe))
+
+## out of sample confusion matrix
+confusion_matrix = table(pred_oos, mlTrain_test$classe)
+confusion_matrix
+```
+
+Estimated out of sample error rate
+```{r}
+oos_errorRate = 1.00 - sum(diag(confusion_matrix)) / sum(confusion_matrix)
+oos_errorRate
+```
+
+# 9. Predict Using pml-test Data
+
+Predict using pml-test data
+```{r}
+predMLTest = predict(RFmodel, newdata=mlTest)
+predMLTest
+```
+
+#10. Write the predicted files
+```{r}
+# write prediction answers to files
+mlWriteFiles = function(x){
+  n = length(x)
+  for(i in 1:n){
+    filename = paste0("problem_id_", i, ".txt")
+    write.table(x[i], file=filename, quote=FALSE, row.names=FALSE, col.names=FALSE)
+  }
+}
+mlWriteFiles(predMLTest)
+```
+
+# 11. Summary
+
+The random forest model used 500 trees and achieved classification error of approximately 1% or better for all 5 classes. The estimated out-of-bag error was 0.66% which agreed well with the separately cross-validated out of sample error rate estimation of 0.59%. 
